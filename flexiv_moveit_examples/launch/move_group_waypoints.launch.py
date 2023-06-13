@@ -28,6 +28,18 @@ def generate_launch_description():
             FindExecutable(name="xacro"),
             " ",
             flexiv_urdf_xacro,
+            " ",
+            "robot_ip:=",
+            "dontcare",
+            " ",
+            "local_ip:=",
+            "dontcare",
+            " ",
+            "name:=",
+            "rizon",
+            " ",
+            "use_fake_hardware:=",
+            "true",
         ]
     )
     robot_description = {"robot_description": robot_description_content}

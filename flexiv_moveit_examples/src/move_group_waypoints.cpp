@@ -1,3 +1,5 @@
+#include <ament_index_cpp/get_package_share_directory.hpp>
+
 #include <moveit/move_group_interface/move_group_interface.h>
 #include <moveit/planning_scene_interface/planning_scene_interface.h>
 
@@ -73,7 +75,8 @@ int main(int argc, char** argv)
 
     // Cartesian Paths
     std::vector<std::vector<double>> data;
-    std::string csv_path = "";
+    std::string package_share_directory = ament_index_cpp::get_package_share_directory("flexiv_moveit_examples");
+    std::string csv_path = package_share_directory + "/config/cartesian_waypoints.csv";
     read_csv(csv_path, data);
 
     std::vector<geometry_msgs::msg::Pose> waypoints;
