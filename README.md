@@ -67,12 +67,31 @@ This project was developed for ROS 2 Foxy (Ubuntu 20.04) and Humble (Ubuntu 22.0
    rosdep install --from-paths src --ignore-src --rosdistro humble -r -y
    ```
 
-5. Build and source the workspace:
+> [!NOTE]
+> Skip step 5 and 6 if you have compile and install [flexiv_rdk](https://github.com/flexivrobotics/flexiv_rdk).
+
+5. Choose a directory for installing `flexiv_rdk` library and all its dependencies. For example, a new folder named `rdk_install` under the home directory: `~/rdk_install`. Compile and install to the installation directory:
+
+   ```bash
+   cd ~/flexiv_ros2_ws/src/flexiv_ros2/flexiv_hardware/rdk/thirdparty
+   bash build_and_install_dependencies.sh ~/rdk_install
+   ```
+
+6. Configure and install `flexiv_rdk`:
+
+   ```bash
+   cd ~/flexiv_ros2_ws/src/flexiv_ros2/flexiv_hardware/rdk
+   mkdir build && cd build
+   cmake .. -DCMAKE_INSTALL_PREFIX=~/rdk_install
+   cmake --build . --target install --config Release
+   ```
+
+7. Build and source the workspace:
 
    ```bash
    cd ~/flexiv_ros2_ws
    source /opt/ros/humble/setup.bash
-   colcon build --symlink-install
+   colcon build --symlink-install --cmake-args -DCMAKE_PREFIX_PATH=~/rdk_install
    source install/setup.bash
    ```
 
@@ -86,15 +105,14 @@ This project was developed for ROS 2 Foxy (Ubuntu 20.04) and Humble (Ubuntu 22.0
 ## Usage
 
 > [!NOTE]
-> The instruction below is only a quick reference, see the [Flexiv ROS 2 Documentation](https://rdk.flexiv.com/manual/ros2_packages.html) for more information.
+> The instruction below is only a quick reference, see the [Flexiv ROS 2 Documentation](https://rdk.flexiv.com/manual/ros2_bridge.html) for more information.
 
-The prerequisites of using ROS 2 with Flexiv Rizon robot are [enable RDK on the robot server](https://rdk.flexiv.com/manual/getting_started.html#activate-rdk-server) and [establish connection](https://rdk.flexiv.com/manual/getting_started.html#establish-connection) between the workstation PC and the robot.
+The prerequisites of using ROS 2 with Flexiv Rizon robot are [enable RDK on the robot server](https://rdk.flexiv.com/manual/activate_rdk_server.html) and [establish connection](https://rdk.flexiv.com/manual/establish_connection.html) between the workstation PC and the robot.
 
-The main launch file to start the robot driver is the `rizon.launch.py` - it loads and starts the robot hardware, joint states broadcaster, force torque sensor broadcaster, TCP wrench and TCP pose broadcasters, and robot controller and opens RViZ. The arguments for the launch file are as follows:
+The main launch file to start the robot driver is the `rizon.launch.py` - it loads and starts the robot hardware, joint states broadcaster, Flexiv robot states broadcasters, and robot controller and opens RViZ. The arguments for the launch file are as follows:
 
-- `robot_ip` (*required*) - IP address of the robot server (remote).
-- `local_ip` (*required*) - IP address of the workstation PC (local).
-- `rizon_type` (default: *rizon4*) - type of the Flexiv Rizon robot. (rizon4, rizon4s or rizon10)
+- `robot_sn` (*required*) - Serial number of the robot to connect to. Remove any space, for example: Rizon4s-123456
+- `rizon_type` (default: *rizon4*) - type of the Flexiv Rizon robot. (rizon4, rizon4s, rizon10 or rizon10s)
 - `use_fake_hardware` (default: *false*) - starts `FakeSystem` instead of real hardware. This is a simple simulation that mimics joint command to their states.
 - `start_rviz` (deafult: *true*) - starts RViz automatically with the launch file.
 - `fake_sensor_commands` (default: *false*) - enables fake command interfaces for sensors used for simulations. Used only if `use_fake_hardware` parameter is true.
@@ -109,13 +127,13 @@ The main launch file to start the robot driver is the `rizon.launch.py` - it loa
    - Test with real robot:
 
      ```bash
-     ros2 launch flexiv_bringup rizon.launch.py robot_ip:=[robot_ip] local_ip:=[local_ip] rizon_type:=rizon4
+     ros2 launch flexiv_bringup rizon.launch.py robot_sn:=[robot_sn] rizon_type:=rizon4
      ```
 
    - Test with fake hardware (`ros2_control` capability):
 
      ```bash
-     ros2 launch flexiv_bringup rizon.launch.py robot_ip:=dont-care local_ip:=dont-care use_fake_hardware:=true
+     ros2 launch flexiv_bringup rizon.launch.py robot_sn:=dont-care use_fake_hardware:=true
      ```
 
 > [!TIP]
@@ -133,7 +151,7 @@ The main launch file to start the robot driver is the `rizon.launch.py` - it loa
    - To test another controller, define it using the `robot_controller` launch argument, for example the `joint_impedance_controller`:
 
      ```bash
-     ros2 launch flexiv_bringup rizon.launch.py robot_ip:=[robot_ip] local_ip:=[local_ip] robot_controller:=joint_impedance_controller
+     ros2 launch flexiv_bringup rizon.launch.py robot_sn:=[robot_sn] robot_controller:=joint_impedance_controller
      ```
 
      Open a new terminal and run the launch file:
@@ -155,27 +173,24 @@ The main launch file to start the robot driver is the `rizon.launch.py` - it loa
 You can also run the MoveIt example and use the `MotionPlanning` plugin in RViZ to start planning:
 
 ```bash
-ros2 launch flexiv_bringup rizon_moveit.launch.py robot_ip:=[robot_ip] local_ip:=[local_ip]
+ros2 launch flexiv_bringup rizon_moveit.launch.py robot_sn:=[robot_sn]
 ```
 
 Test with fake hardware:
 
 ```bash
-ros2 launch flexiv_bringup rizon_moveit.launch.py robot_ip:=dont-care local_ip:=dont-care use_fake_hardware:=true
+ros2 launch flexiv_bringup rizon_moveit.launch.py robot_sn:=dont-care use_fake_hardware:=true
 ```
 
 ### Robot States
 
 The robot driver (`rizon.launch.py`) publishes the following feedback states to the respective ROS topics:
 
+- `/${robot_sn}/flexiv_robot_states`: [Flexiv robot states](https://rdk.flexiv.com/api/structflexiv_1_1rdk_1_1_robot_states.html#details) including the joint- and Cartesian-space robot states. [[`flexiv_msgs/msg/RobotStates.msg`](flexiv_msgs/msg/RobotStates.msg)]
 - `/joint_states`: Measured joint states of the robot: joint position, velocity and torque. [[`sensor_msgs/JointState.msg`](https://docs.ros.org/en/noetic/api/sensor_msgs/html/msg/JointState.html)]
-- `/external_wrench_in_tcp_broadcaster/external_wrench_in_tcp`: Estimated external wrench applied on TCP and expressed in TCP frame $^{TCP}F_{ext}$ in force $[N]$ and moment $[Nm]$. [[`geometry_msgs/WrenchStamped.msg`](https://docs.ros.org/en/noetic/api/geometry_msgs/html/msg/WrenchStamped.html)]
-- `/external_wrench_in_base_broadcaster/external_wrench_in_base`: Estimated external wrench applied on TCP and expressed in base frame $^{0}F_{ext}$ in force $[N]$ and moment $[Nm]$. [[`geometry_msgs/WrenchStamped.msg`](https://docs.ros.org/en/noetic/api/geometry_msgs/html/msg/WrenchStamped.html)]
-- `/force_torque_sensor_broadcaster/wrench`: Force-torque (FT) sensor raw reading in flange frame: $^{flange}F_{raw}$ in force $[N]$ and moment $[Nm]$. The value is 0 if no FT sensor is installed. [[`geometry_msgs/WrenchStamped.msg`](https://docs.ros.org/en/noetic/api/geometry_msgs/html/msg/WrenchStamped.html)]
-- `/tcp_pose_broadcaster/tcp_pose`: Measured TCP pose expressed in base frame $^{0}T_{TCP}$ in position $[m]$ and quaternion. [[`geometry_msgs/PoseStamped.msg`](https://docs.ros.org/en/noetic/api/geometry_msgs/html/msg/PoseStamped.html)]
-
-> [!NOTE]
-> The topic names of the broadcasters are specified in `flexiv_bringup/config/rizon_controllers.yaml`
+- `/flexiv_robot_states_broadcaster/tcp_pose`: Measured TCP pose expressed in world frame $^{0}T_{TCP}$ in position $[m]$ and quaternion. [[`geometry_msgs/PoseStamped.msg`](https://docs.ros.org/en/noetic/api/geometry_msgs/html/msg/PoseStamped.html)]
+- `/flexiv_robot_states_broadcaster/external_wrench_in_tcp`: Estimated external wrench applied on TCP and expressed in TCP frame $^{TCP}F_{ext}$ in force $[N]$ and torque $[Nm]$. [[`geometry_msgs/WrenchStamped.msg`](https://docs.ros.org/en/noetic/api/geometry_msgs/html/msg/WrenchStamped.html)]
+- `/flexiv_robot_states_broadcaster/external_wrench_in_world`: Estimated external wrench applied on TCP and expressed in world frame $^{0}F_{ext}$ in force $[N]$ and torque $[Nm]$. [[`geometry_msgs/WrenchStamped.msg`](https://docs.ros.org/en/noetic/api/geometry_msgs/html/msg/WrenchStamped.html)]
 
 ### GPIO
 

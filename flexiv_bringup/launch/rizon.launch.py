@@ -1,6 +1,6 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, RegisterEventHandler
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit
 from launch.substitutions import (
     Command,
@@ -14,8 +14,7 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     rizon_type_param_name = "rizon_type"
-    robot_ip_param_name = "robot_ip"
-    local_ip_param_name = "local_ip"
+    robot_sn_param_name = "robot_sn"
     start_rviz_param_name = "start_rviz"
     use_fake_hardware_param_name = "use_fake_hardware"
     fake_sensor_commands_param_name = "fake_sensor_commands"
@@ -29,21 +28,14 @@ def generate_launch_description():
             rizon_type_param_name,
             description="Type of the Flexiv Rizon robot.",
             default_value="rizon4",
-            choices=["rizon4", "rizon4s", "rizon10"],
+            choices=["rizon4", "rizon4s", "rizon10", "rizon10s"],
         )
     )
 
     declared_arguments.append(
         DeclareLaunchArgument(
-            robot_ip_param_name,
-            description="IP address of the robot server (remote).",
-        )
-    )
-
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            local_ip_param_name,
-            description="IP address of the workstation PC (local).",
+            robot_sn_param_name,
+            description="Serial number of the robot to connect to. Remove any space, for example: Rizon4s-123456",
         )
     )
 
@@ -82,8 +74,7 @@ def generate_launch_description():
 
     # Initialize Arguments
     rizon_type = LaunchConfiguration(rizon_type_param_name)
-    robot_ip = LaunchConfiguration(robot_ip_param_name)
-    local_ip = LaunchConfiguration(local_ip_param_name)
+    robot_sn = LaunchConfiguration(robot_sn_param_name)
     start_rviz = LaunchConfiguration(start_rviz_param_name)
     use_fake_hardware = LaunchConfiguration(use_fake_hardware_param_name)
     fake_sensor_commands = LaunchConfiguration(fake_sensor_commands_param_name)
@@ -101,11 +92,8 @@ def generate_launch_description():
             " ",
             flexiv_urdf_xacro,
             " ",
-            "robot_ip:=",
-            robot_ip,
-            " ",
-            "local_ip:=",
-            local_ip,
+            "robot_sn:=",
+            robot_sn,
             " ",
             "name:=",
             "rizon",
@@ -145,7 +133,7 @@ def generate_launch_description():
     ros2_control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
-        parameters=[robot_description, robot_controllers],
+        parameters=[robot_description, robot_controllers, {"robot_sn": robot_sn}],
         output="both",
     )
 
@@ -176,48 +164,13 @@ def generate_launch_description():
         ],
     )
 
-    # Run force torque sensor broadcaster
-    force_torque_sensor_broadcaster_spawner = Node(
+    # Run Flexiv robot states broadcaster
+    flexiv_robot_states_broadcaster_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=[
-            "force_torque_sensor_broadcaster",
-            "--controller-manager",
-            "/controller_manager",
-        ],
-    )
-
-    # Run external wrench in base broadcaster
-    external_wrench_in_base_broadcaster_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            "external_wrench_in_base_broadcaster",
-            "--controller-manager",
-            "/controller_manager",
-        ],
-    )
-
-    # Run external wrench in tcp broadcaster
-    external_wrench_in_tcp_broadcaster_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            "external_wrench_in_tcp_broadcaster",
-            "--controller-manager",
-            "/controller_manager",
-        ],
-    )
-
-    # Run tcp pose state broadcaster
-    tcp_pose_state_broadcaster_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=[
-            "tcp_pose_state_broadcaster",
-            "--controller-manager",
-            "/controller_manager",
-        ],
+        arguments=["flexiv_robot_states_broadcaster"],
+        parameters=[{"robot_sn": robot_sn}],
+        condition=UnlessCondition(use_fake_hardware),
     )
 
     # Run gpio controller
@@ -249,10 +202,7 @@ def generate_launch_description():
         ros2_control_node,
         robot_state_publisher_node,
         joint_state_broadcaster_spawner,
-        force_torque_sensor_broadcaster_spawner,
-        external_wrench_in_base_broadcaster_spawner,
-        external_wrench_in_tcp_broadcaster_spawner,
-        tcp_pose_state_broadcaster_spawner,
+        flexiv_robot_states_broadcaster_spawner,
         gpio_controller_spawner,
         delay_rviz_after_joint_state_broadcaster_spawner,
         delay_robot_controller_spawner_after_joint_state_broadcaster_spawner,

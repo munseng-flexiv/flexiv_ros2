@@ -2,7 +2,7 @@
  * @file flexiv_hardware_interface.hpp
  * @brief Hardware interface to Flexiv robots for ROS 2 control. Adapted from
  * ros2_control_demos/example_3/hardware/include/ros2_control_demo_example_3/rrbot_system_multi_interface.hpp
- * @copyright Copyright (C) 2016-2021 Flexiv Ltd. All Rights Reserved.
+ * @copyright Copyright (C) 2016-2024 Flexiv Ltd. All Rights Reserved.
  * @author Flexiv
  */
 
@@ -29,9 +29,12 @@
 #include "flexiv_hardware/visibility_control.h"
 
 // Flexiv
-#include "flexiv/Robot.hpp"
+#include "flexiv/rdk/robot.hpp"
 
 namespace flexiv_hardware {
+
+/** Robot joint space degree of freedoms */
+constexpr size_t kJointDoF = 7;
 
 enum StoppingInterface
 {
@@ -82,11 +85,9 @@ public:
     hardware_interface::return_type write(
         const rclcpp::Time& time, const rclcpp::Duration& period) override;
 
-    static const size_t n_joints = 7;
-
 private:
     // Flexiv RDK
-    std::unique_ptr<flexiv::Robot> robot_;
+    std::unique_ptr<flexiv::rdk::Robot> robot_;
 
     // Joint commands
     std::vector<double> hw_commands_joint_positions_;
@@ -98,18 +99,9 @@ private:
     std::vector<double> hw_states_joint_velocities_;
     std::vector<double> hw_states_joint_efforts_;
 
-    // Force-torque (FT) sensor raw reading in flange frame. The value is 0 if
-    // no FT sensor is installed.
-    std::vector<double> hw_states_force_torque_sensor_;
-
-    // Estimated external wrench applied on TCP and expressed in base frame.
-    std::vector<double> hw_states_external_wrench_in_base_;
-
-    // Estimated external wrench applied on TCP and expressed in TCP frame.
-    std::vector<double> hw_states_external_wrench_in_tcp_;
-
-    // Measured TCP pose expressed in base frame [x, y, z, qx, qy, qz, qw].
-    std::vector<double> hw_states_tcp_pose_;
+    // Robot States
+    flexiv::rdk::RobotStates hw_flexiv_robot_states_;
+    flexiv::rdk::RobotStates* hw_flexiv_robot_states_addr_ = &hw_flexiv_robot_states_;
 
     // GPIO commands and states
     std::vector<double> hw_commands_gpio_out_;

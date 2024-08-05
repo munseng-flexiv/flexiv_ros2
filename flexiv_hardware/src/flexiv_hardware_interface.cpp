@@ -2,7 +2,7 @@
  * @file flexiv_hardware_interface.cpp
  * @brief Hardware interface to Flexiv robots for ROS 2 control. Adapted from
  * ros2_control_demos/example_3/hardware/rrbot_system_multi_interface.cpp
- * @copyright Copyright (C) 2016-2021 Flexiv Ltd. All Rights Reserved.
+ * @copyright Copyright (C) 2016-2024 Flexiv Ltd. All Rights Reserved.
  * @author Flexiv
  */
 
@@ -14,8 +14,7 @@
 #include <hardware_interface/types/hardware_interface_return_values.hpp>
 #include <hardware_interface/types/hardware_interface_type_values.hpp>
 
-#include "flexiv/Robot.hpp"
-#include "flexiv/Exception.hpp"
+#include "flexiv/rdk/robot.hpp"
 #include "flexiv_hardware/flexiv_hardware_interface.hpp"
 
 namespace flexiv_hardware {
@@ -39,15 +38,8 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_init(
         info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
     hw_commands_joint_efforts_.resize(
         info_.joints.size(), std::numeric_limits<double>::quiet_NaN());
-    hw_states_force_torque_sensor_.resize(
-        info_.sensors[0].state_interfaces.size(), std::numeric_limits<double>::quiet_NaN());
-    hw_states_external_wrench_in_base_.resize(
-        info_.sensors[1].state_interfaces.size(), std::numeric_limits<double>::quiet_NaN());
-    hw_states_external_wrench_in_tcp_.resize(
-        info_.sensors[2].state_interfaces.size(), std::numeric_limits<double>::quiet_NaN());
-    hw_states_tcp_pose_.resize(7, std::numeric_limits<double>::quiet_NaN());
-    hw_states_gpio_in_.resize(16, std::numeric_limits<double>::quiet_NaN());
-    hw_commands_gpio_out_.resize(16, std::numeric_limits<double>::quiet_NaN());
+    hw_states_gpio_in_.resize(flexiv::rdk::kIOPorts, std::numeric_limits<double>::quiet_NaN());
+    hw_commands_gpio_out_.resize(flexiv::rdk::kIOPorts, std::numeric_limits<double>::quiet_NaN());
     stop_modes_ = {StoppingInterface::NONE, StoppingInterface::NONE, StoppingInterface::NONE,
         StoppingInterface::NONE, StoppingInterface::NONE, StoppingInterface::NONE,
         StoppingInterface::NONE};
@@ -57,8 +49,8 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_init(
     torque_controller_running_ = false;
     controllers_initialized_ = false;
 
-    if (info_.joints.size() != n_joints) {
-        RCLCPP_FATAL(getLogger(), "Got %ld joints. Expected %ld.", info_.joints.size(), n_joints);
+    if (info_.joints.size() != kJointDoF) {
+        RCLCPP_FATAL(getLogger(), "Got %ld joints. Expected %ld.", info_.joints.size(), kJointDoF);
         return hardware_interface::CallbackReturn::ERROR;
     }
 
@@ -118,27 +110,18 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_init(
         }
     }
 
-    std::string robot_ip;
+    std::string robot_sn;
     try {
-        robot_ip = info_.hardware_parameters["robot_ip"];
+        robot_sn = info_.hardware_parameters["robot_sn"];
     } catch (const std::out_of_range& ex) {
-        RCLCPP_FATAL(getLogger(), "Parameter 'robot_ip' not set");
-        return hardware_interface::CallbackReturn::ERROR;
-    }
-
-    std::string local_ip;
-    try {
-        local_ip = info_.hardware_parameters["local_ip"];
-    } catch (const std::out_of_range& ex) {
-        RCLCPP_FATAL(getLogger(), "Parameter 'local_ip' not set");
+        RCLCPP_FATAL(getLogger(), "Parameter 'robot_sn' not set");
         return hardware_interface::CallbackReturn::ERROR;
     }
 
     try {
-        RCLCPP_INFO(getLogger(), "Connecting to robot at \"%s\" from \"%s\" ...", robot_ip.c_str(),
-            local_ip.c_str());
-        robot_ = std::make_unique<flexiv::Robot>(robot_ip, local_ip);
-    } catch (const flexiv::Exception& e) {
+        RCLCPP_INFO(getLogger(), "Connecting to robot %s ...", robot_sn.c_str());
+        robot_ = std::make_unique<flexiv::rdk::Robot>(robot_sn);
+    } catch (const std::exception& e) {
         RCLCPP_FATAL(getLogger(), "Could not connect to robot");
         RCLCPP_FATAL(getLogger(), e.what());
         return hardware_interface::CallbackReturn::ERROR;
@@ -167,27 +150,14 @@ std::vector<hardware_interface::StateInterface> FlexivHardwareInterface::export_
             info_.joints[i].name, hardware_interface::HW_IF_EFFORT, &hw_states_joint_efforts_[i]));
     }
 
-    for (std::size_t i = 0; i < info_.sensors.size(); i++) {
-        const auto& sensor = info_.sensors[i];
-        for (std::size_t j = 0; j < sensor.state_interfaces.size(); j++) {
-            if (i == 0) {
-                state_interfaces.emplace_back(hardware_interface::StateInterface(sensor.name,
-                    sensor.state_interfaces[j].name, &hw_states_force_torque_sensor_[j]));
-            } else if (i == 1) {
-                state_interfaces.emplace_back(hardware_interface::StateInterface(sensor.name,
-                    sensor.state_interfaces[j].name, &hw_states_external_wrench_in_base_[j]));
-            } else if (i == 2) {
-                state_interfaces.emplace_back(hardware_interface::StateInterface(sensor.name,
-                    sensor.state_interfaces[j].name, &hw_states_external_wrench_in_tcp_[j]));
-            } else if (i == 3) {
-                state_interfaces.emplace_back(hardware_interface::StateInterface(
-                    sensor.name, sensor.state_interfaces[j].name, &hw_states_tcp_pose_[j]));
-            }
-        }
-    }
+    std::string robot_sn = info_.hardware_parameters.at("robot_sn");
+    // Replace "-" with "_" in robot_sn to match the state interface name
+    std::replace(robot_sn.begin(), robot_sn.end(), '-', '_');
+    state_interfaces.emplace_back(hardware_interface::StateInterface(
+        robot_sn, "flexiv_robot_states", reinterpret_cast<double*>(&hw_flexiv_robot_states_addr_)));
 
     const std::string prefix = info_.hardware_parameters.at("prefix");
-    for (std::size_t i = 0; i < 16; i++) {
+    for (std::size_t i = 0; i < flexiv::rdk::kIOPorts; i++) {
         state_interfaces.emplace_back(hardware_interface::StateInterface(
             prefix + "gpio", "digital_input_" + std::to_string(i), &hw_states_gpio_in_[i]));
     }
@@ -211,7 +181,7 @@ FlexivHardwareInterface::export_command_interfaces()
     }
 
     const std::string prefix = info_.hardware_parameters.at("prefix");
-    for (size_t i = 0; i < 16; i++) {
+    for (size_t i = 0; i < flexiv::rdk::kIOPorts; i++) {
         command_interfaces.emplace_back(hardware_interface::CommandInterface(
             prefix + "gpio", "digital_output_" + std::to_string(i), &hw_commands_gpio_out_[i]));
     }
@@ -228,13 +198,13 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_activate(
 
     try {
         // Clear fault on robot server if any
-        if (robot_->isFault()) {
+        if (robot_->fault()) {
             RCLCPP_WARN(getLogger(), "Fault occurred on robot server, trying to clear ...");
             // Try to clear the fault
-            robot_->clearFault();
+            robot_->ClearFault();
             std::this_thread::sleep_for(std::chrono::seconds(2));
             // Check again
-            if (robot_->isFault()) {
+            if (robot_->fault()) {
                 RCLCPP_FATAL(getLogger(), "Fault cannot be cleared, exiting ...");
                 return hardware_interface::CallbackReturn::ERROR;
             }
@@ -243,14 +213,14 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_activate(
 
         // Enable the robot
         RCLCPP_INFO(getLogger(), "Enabling robot ...");
-        robot_->enable();
+        robot_->Enable();
 
         // Wait for the robot to become operational
-        while (!robot_->isOperational(false)) {
+        while (!robot_->operational(false)) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
         RCLCPP_INFO(getLogger(), "Robot is now operational");
-    } catch (const flexiv::Exception& e) {
+    } catch (const std::exception& e) {
         RCLCPP_FATAL(getLogger(), "Could not enable robot.");
         RCLCPP_FATAL(getLogger(), e.what());
         return hardware_interface::CallbackReturn::ERROR;
@@ -268,8 +238,7 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_deactivate(
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
-    robot_->stop();
-    robot_->disconnect();
+    robot_->Stop();
 
     RCLCPP_INFO(getLogger(), "System successfully stopped!");
 
@@ -279,29 +248,16 @@ hardware_interface::CallbackReturn FlexivHardwareInterface::on_deactivate(
 hardware_interface::return_type FlexivHardwareInterface::read(
     const rclcpp::Time& /*time*/, const rclcpp::Duration& /*period*/)
 {
-    flexiv::RobotStates robot_states;
-    if (robot_->isOperational(false) && robot_->getMode() != flexiv::Mode::IDLE) {
-        robot_->getRobotStates(robot_states);
+    if (robot_->operational(false) && robot_->mode() != flexiv::rdk::Mode::IDLE) {
 
-        hw_states_joint_positions_ = robot_states.q;
-        hw_states_joint_velocities_ = robot_states.dtheta;
-        hw_states_joint_efforts_ = robot_states.tau;
+        hw_flexiv_robot_states_ = robot_->states();
 
-        hw_states_force_torque_sensor_ = robot_states.ftSensorRaw;
-        hw_states_external_wrench_in_base_ = robot_states.extWrenchInBase;
-        hw_states_external_wrench_in_tcp_ = robot_states.extWrenchInTcp;
-
-        // Convert quaternion order from [w, x, y, z] to [x, y, z, w]
-        hw_states_tcp_pose_[0] = robot_states.tcpPose[0];
-        hw_states_tcp_pose_[1] = robot_states.tcpPose[1];
-        hw_states_tcp_pose_[2] = robot_states.tcpPose[2];
-        hw_states_tcp_pose_[3] = robot_states.tcpPose[4];
-        hw_states_tcp_pose_[4] = robot_states.tcpPose[5];
-        hw_states_tcp_pose_[5] = robot_states.tcpPose[6];
-        hw_states_tcp_pose_[6] = robot_states.tcpPose[3];
+        hw_states_joint_positions_ = robot_->states().q;
+        hw_states_joint_velocities_ = robot_->states().dtheta;
+        hw_states_joint_efforts_ = robot_->states().tau;
 
         // Read GPIO input states
-        auto gpio_in = robot_->readDigitalInput();
+        auto gpio_in = robot_->ReadDigitalInput();
         for (size_t i = 0; i < hw_states_gpio_in_.size(); i++) {
             hw_states_gpio_in_[i] = static_cast<double>(gpio_in[i]);
         }
@@ -313,15 +269,15 @@ hardware_interface::return_type FlexivHardwareInterface::read(
 hardware_interface::return_type FlexivHardwareInterface::write(
     const rclcpp::Time& /*time*/, const rclcpp::Duration& /*period*/)
 {
-    std::vector<double> targetAcceleration(n_joints, 0);
-    std::vector<double> targetVelocity(n_joints, 0);
-    std::fill(targetAcceleration.begin(), targetAcceleration.end(), 0.0);
-    std::fill(targetVelocity.begin(), targetVelocity.end(), 0.0);
+    // Initialize target vectors to hold position
+    std::vector<double> target_pos(robot_->info().DoF);
+    std::vector<double> target_vel(robot_->info().DoF);
+    std::vector<double> target_acc(robot_->info().DoF);
 
     bool isNanPos = false;
     bool isNanVel = false;
     bool isNanEff = false;
-    for (std::size_t i = 0; i < n_joints; i++) {
+    for (std::size_t i = 0; i < robot_->info().DoF; i++) {
         if (hw_commands_joint_positions_[i] != hw_commands_joint_positions_[i]) {
             isNanPos = true;
         }
@@ -333,17 +289,20 @@ hardware_interface::return_type FlexivHardwareInterface::write(
         }
     }
 
-    if (position_controller_running_ && robot_->getMode() == flexiv::Mode::RT_JOINT_POSITION
+    if (position_controller_running_ && robot_->mode() == flexiv::rdk::Mode::RT_JOINT_POSITION
         && !isNanPos) {
-        robot_->streamJointPosition(
-            hw_commands_joint_positions_, targetVelocity, targetAcceleration);
-    } else if (velocity_controller_running_ && robot_->getMode() == flexiv::Mode::RT_JOINT_POSITION
-               && !isNanVel) {
-        robot_->streamJointPosition(
-            hw_states_joint_positions_, hw_commands_joint_velocities_, targetAcceleration);
-    } else if (torque_controller_running_ && robot_->getMode() == flexiv::Mode::RT_JOINT_TORQUE
+        target_pos = hw_commands_joint_positions_;
+        robot_->StreamJointPosition(target_pos, target_vel, target_acc);
+    } else if (velocity_controller_running_
+               && robot_->mode() == flexiv::rdk::Mode::RT_JOINT_POSITION && !isNanVel) {
+        target_pos = hw_commands_joint_positions_;
+        target_vel = hw_commands_joint_velocities_;
+        robot_->StreamJointPosition(target_pos, target_vel, target_acc);
+    } else if (torque_controller_running_ && robot_->mode() == flexiv::rdk::Mode::RT_JOINT_TORQUE
                && !isNanEff) {
-        robot_->streamJointTorque(hw_commands_joint_efforts_, true, true);
+        std::vector<double> target_torque(robot_->info().DoF);
+        target_torque = hw_commands_joint_efforts_;
+        robot_->StreamJointTorque(target_torque, true, true);
     }
 
     // Write digital output
@@ -357,7 +316,7 @@ hardware_interface::return_type FlexivHardwareInterface::write(
         ports_values.push_back(static_cast<bool>(hw_commands_gpio_out_[i]));
     }
 
-    robot_->writeDigitalOutput(ports_indices, ports_values);
+    robot_->WriteDigitalOutput(ports_indices, ports_values);
 
     return hardware_interface::return_type::OK;
 }
@@ -426,18 +385,18 @@ hardware_interface::return_type FlexivHardwareInterface::perform_command_mode_sw
         && std::find(stop_modes_.begin(), stop_modes_.end(), StoppingInterface::STOP_POSITION)
                != stop_modes_.end()) {
         position_controller_running_ = false;
-        robot_->stop();
+        robot_->Stop();
     } else if (stop_modes_.size() != 0
                && std::find(
                       stop_modes_.begin(), stop_modes_.end(), StoppingInterface::STOP_VELOCITY)
                       != stop_modes_.end()) {
         velocity_controller_running_ = false;
-        robot_->stop();
+        robot_->Stop();
     } else if (stop_modes_.size() != 0
                && std::find(stop_modes_.begin(), stop_modes_.end(), StoppingInterface::STOP_EFFORT)
                       != stop_modes_.end()) {
         torque_controller_running_ = false;
-        robot_->stop();
+        robot_->Stop();
     }
 
     if (start_modes_.size() != 0
@@ -451,7 +410,7 @@ hardware_interface::return_type FlexivHardwareInterface::perform_command_mode_sw
             std::numeric_limits<double>::quiet_NaN());
 
         // Set to joint position mode
-        robot_->setMode(flexiv::Mode::RT_JOINT_POSITION);
+        robot_->SwitchMode(flexiv::rdk::Mode::RT_JOINT_POSITION);
 
         position_controller_running_ = true;
     } else if (start_modes_.size() != 0
@@ -466,7 +425,7 @@ hardware_interface::return_type FlexivHardwareInterface::perform_command_mode_sw
             std::numeric_limits<double>::quiet_NaN());
 
         // Set to joint position mode
-        robot_->setMode(flexiv::Mode::RT_JOINT_POSITION);
+        robot_->SwitchMode(flexiv::rdk::Mode::RT_JOINT_POSITION);
 
         velocity_controller_running_ = true;
     } else if (start_modes_.size() != 0
@@ -482,7 +441,7 @@ hardware_interface::return_type FlexivHardwareInterface::perform_command_mode_sw
             std::numeric_limits<double>::quiet_NaN());
 
         // Set to joint torque mode
-        robot_->setMode(flexiv::Mode::RT_JOINT_TORQUE);
+        robot_->SwitchMode(flexiv::rdk::Mode::RT_JOINT_TORQUE);
 
         torque_controller_running_ = true;
     }
